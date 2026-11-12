@@ -278,6 +278,18 @@ def run_send() -> int:
     today_iso = datetime.now().strftime("%Y-%m-%d")
     (ARCHIVE_DIR / f"{today_iso}.txt").write_text(report, encoding="utf-8")
 
+    # 自动同步归档到 Notion「每日情报归档与决策看板」数据库
+    try:
+        from notion_archive import archive_to_notion
+        is_weekly = "--since weekly" in sys.argv or (datetime.now().weekday() == 6)
+        ok, res = archive_to_notion(report, "🐙 GitHub & HN", date_str=today_iso, report_type="周盘点" if is_weekly else "日报")
+        if ok:
+            print(f"  ✓ 已同步归档至 Notion: {res}", file=sys.stderr)
+        else:
+            print(f"  [WARN] Notion 归档未完成: {res}", file=sys.stderr)
+    except Exception as e:
+        print(f"  [WARN] Notion 归档调用失败: {e}", file=sys.stderr)
+
     try:
         meta = json.loads(FETCH_META.read_text(encoding="utf-8"))
     except Exception:
