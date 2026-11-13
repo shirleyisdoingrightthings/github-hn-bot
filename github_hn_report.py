@@ -2,10 +2,10 @@
 """
 GitHub Trending & Hacker News 早报
 
-每天早 09:30 自动抓取 GitHub Trending 与 Hacker News 热榜前五，
-由 Agent 写稿后推送到飞书。
-- 周一至周六（或 --since daily）：抓取 GitHub Daily 飙升榜（since=daily）+ Hacker News 24h 热榜 Top 5，输出 === FETCH_OK ===
-- 周日（或 --since weekly）：抓取 GitHub Weekly 周趋势榜（since=weekly）+ Hacker News 24h 热榜 Top 5，输出 === WEEKLY_OK ===
+每天早 09:30 自动抓取 GitHub Trending 与 Hacker News 热榜前八，
+由 AI 定时任务写稿后推送到飞书。
+- 周一至周六（或 --since daily）：抓取 GitHub Daily 飙升榜（since=daily）+ Hacker News 24h 热榜 Top 8，输出 === FETCH_OK ===
+- 周日（或 --since weekly）：抓取 GitHub Weekly 周趋势榜（since=weekly）+ Hacker News 24h 热榜 Top 8，输出 === WEEKLY_OK ===
 
 跨天重复处理规则：
 - 本地维护 logs/seen_history.json（记录过去 30 天已推送过的仓库与 HN 帖子及其首次推送日期 MM月DD日）。
@@ -303,7 +303,7 @@ def run_send() -> int:
     metrics = {k: v for k, v in meta.get("metrics", {}).items() if k != "track_urls"}
     write_log(
         "OK",
-        f"Claude写稿 → {meta.get('log_summary', '')} → 飞书推送成功（{sent} 条 / {len(report)}字）",
+        f"AI写稿 → {meta.get('log_summary', '')} → 飞书推送成功（{sent} 条 / {len(report)}字）",
         metrics={**metrics, "duration_s": duration, "report_chars": len(report)},
     )
     return 0

@@ -1,9 +1,12 @@
 #!/bin/bash
 # health_check.sh — GitHub Trending & Hacker News 早报
-# 每天 10:30 及开机唤醒时检查今天是否已成功推送，若未推送则自动触发 claude_catchup.sh 无头补跑
+# 每天 10:30 检查当天是否已成功推送（Option B 轻量化健康检查）
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BOT_NAME="GitHub Trending & HN Morning Bot"
+
+# 周末/工作日早报 09:30 运行，10:30 体检落在窗口内（>= 10）
+CATCHUP_FROM=10
 
 NO_NEWS_PATTERN="均未抓到有效条目"
 NO_NEWS_MSG="今天未抓到有效条目，未出稿"
