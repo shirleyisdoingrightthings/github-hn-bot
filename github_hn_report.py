@@ -27,8 +27,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared"))
 from bot_utils import (
     already_ran_today,
+    archive_and_sync_notion,
     emit_fetch_output,
     extract_hrefs,
+    extract_report_date,
     make_logger,
     make_pending_saver,
     proxy_ok,
@@ -232,6 +234,7 @@ def run_fetch(since_override: str | None = None) -> int:
 
     track_urls = [r["url"] for r in repos] + [it["hn_url"] for it in hn_items] + [it["url"] for it in hn_items]
     meta = {
+        "date_str": now.strftime("%Y-%m-%d"),
         "log_summary": f"GitHub({since}) {len(repos)}个(含重{repeat_repos}) + HN {len(hn_items)}条(含重{repeat_hn})",
         "metrics": {
             "since": since,
@@ -247,7 +250,7 @@ def run_fetch(since_override: str | None = None) -> int:
     return 0
 
 
-def run_send() -> int:
+def run_send(since_override: str | None = None) -> int:
     t0 = time.time()
     if already_ran_today(LOG_FILE):
         print("今天已成功运行过，跳过发送。如需强制请设置 FORCE_RUN=1。", file=sys.stderr)
@@ -274,26 +277,31 @@ def run_send() -> int:
     print(f"  ✓ 推送成功（{sent} 条）", file=sys.stderr)
     CACHE_FILE.unlink(missing_ok=True)
 
-    # 归档当日成稿
-    today_iso = datetime.now().strftime("%Y-%m-%d")
-    (ARCHIVE_DIR / f"{today_iso}.txt").write_text(report, encoding="utf-8")
-
-    # 自动同步归档到 Notion「每日情报归档与决策看板」数据库
-    try:
-        from notion_archive import archive_to_notion
-        is_weekly = "--since weekly" in sys.argv or (datetime.now().weekday() == 6)
-        ok, res = archive_to_notion(report, "🐙 GitHub & HN", date_str=today_iso, report_type="周盘点" if is_weekly else "日报")
-        if ok:
-            print(f"  ✓ 已同步归档至 Notion: {res}", file=sys.stderr)
-        else:
-            print(f"  [WARN] Notion 归档未完成: {res}", file=sys.stderr)
-    except Exception as e:
-        print(f"  [WARN] Notion 归档调用失败: {e}", file=sys.stderr)
-
     try:
         meta = json.loads(FETCH_META.read_text(encoding="utf-8"))
     except Exception:
         meta = {"log_summary": "", "metrics": {}}
+
+    since = (
+        since_override
+        or os.getenv("GH_TRENDING_SINCE", "").strip().lower()
+        or str(meta.get("metrics", {}).get("since", "")).strip().lower()
+    )
+    if since not in ("daily", "weekly"):
+        since = "weekly" if datetime.now().weekday() == 6 else "daily"
+    is_weekly = (since == "weekly")
+
+    # 归档当日成稿并同步到 Notion「每日情报归档与决策看板」数据库
+    doc_date = extract_report_date(report) or meta.get("date_str") or datetime.now().strftime("%Y-%m-%d")
+    notion_meta = archive_and_sync_notion(
+        report,
+        "🐙 GitHub & HN",
+        date_str=doc_date,
+        archive_dir=ARCHIVE_DIR,
+        archive_filename=f"{doc_date}.txt",
+        report_type="周盘点" if is_weekly else "日报",
+    )
+    notion_tag = " | Notion ✓" if notion_meta.get("notion_ok") else " | Notion ⚠️"
 
     track_urls = meta.get("metrics", {}).get("track_urls", []) or []
     total_seen = record_seen_history(SEEN_HISTORY, list(hrefs) + list(track_urls))
@@ -303,8 +311,8 @@ def run_send() -> int:
     metrics = {k: v for k, v in meta.get("metrics", {}).items() if k != "track_urls"}
     write_log(
         "OK",
-        f"AI写稿 → {meta.get('log_summary', '')} → 飞书推送成功（{sent} 条 / {len(report)}字）",
-        metrics={**metrics, "duration_s": duration, "report_chars": len(report)},
+        f"AI写稿 → {meta.get('log_summary', '')} → 飞书推送成功（{sent} 条 / {len(report)}字）{notion_tag}",
+        metrics={**metrics, **notion_meta, "duration_s": duration, "report_chars": len(report)},
     )
     return 0
 
@@ -317,7 +325,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.mode == "fetch":
         return run_fetch(since_override=args.since)
-    return run_send()
+    return run_send(since_override=args.since)
 
 
 if __name__ == "__main__":
