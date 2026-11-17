@@ -31,9 +31,12 @@ from bot_utils import (
     emit_fetch_output,
     extract_hrefs,
     extract_report_date,
+    format_ledger_context,
+    load_daily_ledger,
     make_logger,
     make_pending_saver,
     proxy_ok,
+    record_daily_ledger,
     sanitize_html,
     send_feishu,
 )
@@ -147,6 +150,8 @@ def run_fetch(since_override: str | None = None) -> int:
         since = "weekly" if is_sunday else "daily"
 
     seen = load_seen_history(SEEN_HISTORY)
+    ledger = load_daily_ledger(exclude_bot="🐙 GitHub & HN")
+    today_ledger_urls = ledger["urls"]
     gh_limit = 10 if since == "daily" else 12
 
     print(f"📡 正在抓取 GitHub Trending (since={since}, Top {gh_limit}) 与 Hacker News (Best+Top) Top 8...", file=sys.stderr)
@@ -158,7 +163,7 @@ def run_fetch(since_override: str | None = None) -> int:
         print(f"  ⚠️ GitHub Trending 抓取异常：{exc}", file=sys.stderr)
 
     try:
-        hn_data = sources.fetch_hn_top8(window_h=36, limit=8, seen_history=seen)
+        hn_data = sources.fetch_hn_top8(window_h=36, limit=8, seen_history=seen, today_ledger_urls=today_ledger_urls)
     except Exception as exc:
         hn_data = {"items": [], "raw_count": 0}
         print(f"  ⚠️ Hacker News 抓取异常：{exc}", file=sys.stderr)
@@ -178,21 +183,27 @@ def run_fetch(since_override: str | None = None) -> int:
         f"今天日期：{today_str}",
         f"榜单模式：{'GitHub Weekly 本周趋势榜 + Hacker News (Best+Top) 热榜 Top 8' if since == 'weekly' else 'GitHub Daily 今日飙升榜 + Hacker News (Best+Top) 热榜 Top 8'}",
         f"GitHub 源地址：{gh_data['url']}",
+    ]
+    ledger_block = format_ledger_context(exclude_bot="🐙 GitHub & HN")
+    if ledger_block:
+        out.extend(["", ledger_block])
+    out.extend([
         "",
         "==========================================",
         f"【第一部分：GitHub Trending ({since.upper()}) Top {len(repos)}】",
         "==========================================",
-    ]
+    ])
 
     repeat_repos = 0
     for r in repos:
-        status_str = (
-            f"🔁 重复霸榜（首次见于 {r['prev_date']} 推送）"
-            if r["prev_date"]
-            else "🆕 首次上榜"
-        )
-        if r["prev_date"]:
+        if r.get("prev_date"):
+            status_str = f"🔁 重复霸榜（首次见于 {r['prev_date']} 推送）"
             repeat_repos += 1
+        elif url_key(r["url"]) in today_ledger_urls:
+            status_str = "🔁 今日 09:00 前序 AI 日报已播（建议 1 句话简述并注明详见今日前序日报）"
+            repeat_repos += 1
+        else:
+            status_str = "🆕 首次上榜"
         out.append(f"\n[GitHub #{r['rank']}] {r['repo']}")
         out.append(f"- 链接：{r['url']}")
         out.append(f"- 状态：{status_str}")
@@ -204,19 +215,20 @@ def run_fetch(since_override: str | None = None) -> int:
     out.extend([
         "",
         "==========================================",
-        f"【第二部分：Hacker News (Best高赞 + Top实时热议) Top {len(hn_items)}】",
+        f"【第二部分：Hacker News (Best高赞 + Top实时热议) 候选池 Top {len(hn_items)}（从中精选 Top 8，若遇今日前序已播条目可用下方备选新帖递补或 1 句话折叠）】",
         "==========================================",
     ])
 
     repeat_hn = 0
     for idx, item in enumerate(hn_items, 1):
-        status_str = (
-            f"🔁 重复在榜（首次见于 {item['prev_date']} 推送）"
-            if item["prev_date"]
-            else "🆕 首次上榜"
-        )
-        if item["prev_date"]:
+        if item.get("prev_date"):
+            status_str = f"🔁 重复在榜（首次见于 {item['prev_date']} 推送）"
             repeat_hn += 1
+        elif item.get("in_today_ledger"):
+            status_str = "🔁 今日 09:00 前序 AI 日报已播（优先用下方备选新帖替换，或 1 句话简述注明「详见今日 AI 日报」）"
+            repeat_hn += 1
+        else:
+            status_str = "🆕 首次上榜"
         out.append(f"\n[HN #{idx}] {item['title']}")
         out.append(f"- 原文链接：{item['url']}")
         out.append(f"- HN 讨论串：{item['hn_url']}")
@@ -305,6 +317,7 @@ def run_send(since_override: str | None = None) -> int:
 
     track_urls = meta.get("metrics", {}).get("track_urls", []) or []
     total_seen = record_seen_history(SEEN_HISTORY, list(hrefs) + list(track_urls))
+    record_daily_ledger("🐙 GitHub & HN", report, hrefs, date_str=doc_date)
     print(f"  ✓ 已更新跨天在榜记忆库（共记录 {total_seen} 条 URL）", file=sys.stderr)
 
     duration = round(time.time() - t0, 1)

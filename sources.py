@@ -223,9 +223,11 @@ def _fetch_hn_item_details(item: dict[str, Any]) -> None:
 
 
 def fetch_hn_top8(window_h: int = 36, limit: int = 8,
-                  seen_history: dict[str, str] | None = None) -> dict[str, Any]:
+                  seen_history: dict[str, str] | None = None,
+                  today_ledger_urls: set[str] | None = None) -> dict[str, Any]:
     """融合 Hacker News 的 Best（高分精选榜）与 Top（实时首页高讨论热榜），取综合热度前 8 名。"""
     seen_history = seen_history or {}
+    today_ledger_urls = today_ledger_urls or set()
     cutoff = int(time.time()) - window_h * 3600
 
     # 1. 先从 HN 官方 Firebase API 获取实时 Top 榜前 25 名与 Best 榜前 25 名的 ID 集合，标记榜单属性
@@ -271,6 +273,10 @@ def fetch_hn_top8(window_h: int = 36, limit: int = 8,
                         seen_history.get(url_key(hn_url))
                         or seen_history.get(url_key(ext_url))
                     )
+                    in_today_ledger = (
+                        url_key(ext_url) in today_ledger_urls
+                        or url_key(hn_url) in today_ledger_urls
+                    )
                     # 标记来自 Best 还是 Top 实时热议
                     badges = []
                     if oid in best_ids:
@@ -294,6 +300,7 @@ def fetch_hn_top8(window_h: int = 36, limit: int = 8,
                         "author": h.get("author") or "",
                         "created_at": h.get("created_at") or "",
                         "prev_date": prev_date,
+                        "in_today_ledger": in_today_ledger,
                         "article_excerpt": "",
                         "top_comments": [],
                     }
@@ -301,7 +308,9 @@ def fetch_hn_top8(window_h: int = 36, limit: int = 8,
             print(f"[sources] HN API 请求异常 ({api_url}): {exc}", file=sys.stderr)
 
     sorted_items = sorted(by_id.values(), key=lambda x: x["heat_score"], reverse=True)
-    top_items = sorted_items[:limit]
+    overlap_cnt = sum(1 for it in sorted_items[:limit] if it.get("prev_date") or it.get("in_today_ledger"))
+    fetch_cap = min(limit + overlap_cnt, 12)
+    top_items = sorted_items[:fetch_cap]
 
     if top_items:
         with ThreadPoolExecutor(max_workers=6) as pool:
